@@ -1,0 +1,20 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.devel
+
+.venv
+venv
+start_moonraker
+*.env
+*.egg-info
+.pdm-python
+build
+dist
+share
+
+.vscode
+.mypy_cache
+.pdm-build
+.pytest_cache
