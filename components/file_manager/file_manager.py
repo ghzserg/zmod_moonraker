@@ -750,7 +750,7 @@ class FileManager:
         flist: Dict[str, Any] = {'dirs': [], 'files': []}
         for fname in os.listdir(path):
             full_path = os.path.join(path, fname)
-            if fname == ".shell" or fname == ".mod" or fname == ".zmod" or fname == "lost+found" or fname == "logFiles" or fname == "uploadThumbnail" or fname == "thumbnails" or fname == "camera" or fname == "3mf":
+            if fname == ".shell" or fname == ".mod" or fname == ".zmod" or fname == "lost+found" or fname == "logFiles" or fname == "uploadThumbnail" or fname == "thumbnails" or fname == "camera" or fname == "3mf" or fname == "base":
                 continue
             if not os.path.exists(full_path):
                 continue
@@ -997,7 +997,7 @@ class FileManager:
             scan_dirs: List[str] = []
             # Filter out directories that have already been visited. This
             # prevents infinite recursion "followlinks" is set to True
-            for ignore_dir in ['.git', '.mod', '.zmod', '.shell', 'printer_data', 'log', 'plugins', 'mod', 'mod_data']:
+            for ignore_dir in ['.git', '.mod', '.zmod', '.shell', 'printer_data', 'log', 'plugins', 'mod', 'mod_data', 'base']:
                 if ignore_dir in dir_names:
                     dir_names.remove(ignore_dir)
             for dname in dir_names:
