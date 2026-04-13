@@ -145,7 +145,7 @@ class GitDeploy(AppDeploy):
                 except Exception as e:
                     self.log_info(f"Error executing update script: {e}")
 
-        if self.name=="zmod":
+        if self.name=="zmod" or self.name=="Z-Mod":
             subprocess.run(["/bin/sudo", "systemctl", "reboot"])
         self.notify_status("Update Finished...", is_complete=True)
         return True
