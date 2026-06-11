@@ -105,7 +105,7 @@ class GitDeploy(AppDeploy):
         await self.restart_service()
 
         if "/mod_data/plugins/" in str(self.path):
-            include_line = f"[include plugins/{self.name}/{self.name}.cfg]"
+            include_line = f"[include plugins/{self.name}/"
             cfg_path = "/opt/config/mod_data/plugins.cfg"
             plugin_enabled = False
 
@@ -113,7 +113,7 @@ class GitDeploy(AppDeploy):
                 try:
                     with open(cfg_path, encoding='utf-8') as f:
                         for line in f:
-                            if line.strip() == include_line:
+                            if line.strip().startswith(include_line):
                                 plugin_enabled = True
                                 break
                 except OSError as e:
@@ -147,6 +147,9 @@ class GitDeploy(AppDeploy):
 
         if self.name=="zmod" or self.name=="Z-Mod":
             subprocess.run(["/bin/sudo", "systemctl", "reboot"])
+        else:
+            klippy_api = self.server.lookup_component("klippy_apis")
+            await klippy_api.do_restart("FIRMWARE_RESTART")
         self.notify_status("Update Finished...", is_complete=True)
         return True
 
