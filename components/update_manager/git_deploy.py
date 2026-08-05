@@ -851,10 +851,11 @@ class GitRepo:
             await self._run_git_cmd("clean -d -f", attempts=2)
 
     async def _reset_virtual_sdcard_if_needed(self) -> None:
-        file_path = "klippy/extras/virtual_sdcard.py"
+        file_path = self.src_path.joinpath("klippy/extras/virtual_sdcard.py")
         if not os.path.exists(file_path):
             return
         await self._run_git_cmd_async(f"update-index --no-skip-worktree {file_path}")
+        await self._run_git_cmd_async(f"reset HEAD -- {file_path}")
         await self._run_git_cmd_async(f"checkout -- {file_path}")
 
     async def pull(self) -> None:
