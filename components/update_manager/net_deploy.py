@@ -460,7 +460,7 @@ class NetDeploy(AppDeploy):
         self._log_app_info()
         self._save_state()
         await self.restart_service()
-        subprocess.run(["/opt/config/mod/.shell/root/S70httpd", "restart"])
+        subprocess.run(["/usr/data/zmod/zmod/.shell/root/S70httpd", "restart"])
         msg = "Update Finished..." if rollback_info is None else "Rollback Complete"
         self.notify_status(msg, is_complete=True)
         return True
