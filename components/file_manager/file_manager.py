@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     StrOrPath = Union[str, pathlib.Path]
     _T = TypeVar("_T")
 
-VALID_GCODE_EXTS = ['.gcode', '.g', '.gco', '.ufp', '.nc']
+VALID_GCODE_EXTS = ['.gcode', '.g', '.gco', '.ufp', '.nc', '.3mf']
 METADATA_SCRIPT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "metadata.py"))
 WATCH_FLAGS = iFlags.CREATE | iFlags.DELETE | iFlags.MODIFY \
@@ -871,9 +871,16 @@ class FileManager:
         start_print: bool = upload_args.get('print', "false") == "true"
         f_ext = os.path.splitext(dest_path)[-1].lower()
         unzip_ufp = f_ext == ".ufp" and root == "gcodes"
+        unzip_3mf = f_ext == ".3mf" and root == "gcodes"
         if unzip_ufp:
             filename = os.path.splitext(filename)[0] + ".gcode"
             dest_path = os.path.splitext(dest_path)[0] + ".gcode"
+        elif unzip_3mf:
+            pure_fn = filename.replace(".gcode", "").replace(".3mf", "")
+            pure_dp = dest_path.replace(".gcode", "").replace(".3mf", "")
+
+            filename = pure_fn + ".gcode"
+            dest_path = pure_dp + ".gcode"
         if (
             os.path.isfile(dest_path) and
             os.access in os.supports_effective_ids and
@@ -890,6 +897,7 @@ class FileManager:
             'tmp_file_path': upload_args['tmp_file_path'],
             'start_print': start_print,
             'unzip_ufp': unzip_ufp,
+            'unzip_3mf': unzip_3mf,
             'ext': f_ext,
             "is_link": os.path.islink(dest_path),
             "user": upload_args.get("current_user")
@@ -962,18 +970,46 @@ class FileManager:
                     os.mkdir(cur_path)
                     # wait for inotify to create a watch before proceeding
                     await asyncio.sleep(.1)
+            tmp_path = upload_info['tmp_file_path']
             if upload_info['unzip_ufp']:
                 tmp_path = upload_info['tmp_file_path']
                 finfo = self.get_path_info(tmp_path, upload_info['root'])
                 finfo['ufp_path'] = tmp_path
+            elif upload_info['unzip_3mf']:
+                dest_path = pathlib.Path(upload_info['dest_path'])
+                base_dir = dest_path.parent
+                base_name = dest_path.stem
+
+                def _extract_3mf():
+                    gcode_files_in_zip = []
+                    with zipfile.ZipFile(tmp_path, 'r') as zf:
+                        for zinfo in zf.infolist():
+                            if zinfo.filename.lower().endswith('.gcode'):
+                                gcode_files_in_zip.append(zinfo.filename)
+                        if not gcode_files_in_zip:
+                            raise Exception("No GCode tracks found in 3MF archive")
+                        gcode_files_in_zip.sort()
+
+                        for index, zip_internal_path in enumerate(gcode_files_in_zip):
+                            if index == 0:
+                                target_file_path = dest_path
+                            else:
+                                target_file_path = base_dir.joinpath(f"{base_name}_{index}.gcode")
+
+                            with zf.open(zip_internal_path) as source_gcode:
+                                with open(target_file_path, 'wb') as target_gcode:
+                                    shutil.copyfileobj(source_gcode, target_gcode)
+
+                await self.event_loop.run_in_thread(_extract_3mf)
+                with contextlib.suppress(OSError):
+                    os.remove(tmp_path)
+                finfo = self.get_path_info(str(dest_path), upload_info['root'])
             else:
                 dest_path = upload_info['dest_path']
                 if upload_info["is_link"]:
                     dest_path = os.path.realpath(dest_path)
-                shutil.move(
-                    upload_info['tmp_file_path'], dest_path)
-                finfo = self.get_path_info(upload_info['dest_path'],
-                                           upload_info['root'])
+                shutil.move(tmp_path, dest_path)
+                finfo = self.get_path_info(upload_info['dest_path'], upload_info['root'])
         except Exception:
             logging.exception("Upload Write Error")
             raise self.server.error("Unable to save file", 500)
