@@ -705,12 +705,18 @@ class Authorization:
             ) from e
         return user_info
 
-    def validate_api_key(self, api_key: str) -> UserInfo:
+    def validate_api_key(self, api_key: str) -> UserInfo | None:
         if not self.enable_api_key:
-            raise self.server.error("API Key authentication is disabled", 401)
-        if api_key and hmac.compare_digest(api_key, self.api_key):
+            logging.debug("API Key received when API Key authentication is disabled")
+            return None
+        if not api_key.strip():
+            return None
+        if hmac.compare_digest(api_key, self.api_key):
             return self.users[API_USER]
         raise self.server.error("Invalid API Key", 401)
+
+    def is_api_key_enabled(self) -> bool:
+        return self.enable_api_key
 
     def _load_private_key(self, secret: str) -> Signer:
         try:
@@ -875,9 +881,8 @@ class Authorization:
         if jwt_user is not None:
             return jwt_user
 
-        ip = parse_ip_address(request.remote_ip, True)
-
         # Check oneshot access token
+        ip = parse_ip_address(request.remote_ip, True)
         ost: Optional[List[bytes]] = request.arguments.get('token', None)
         if ost is not None:
             ost_user = self._check_oneshot_token(ost[-1].decode(), ip)
@@ -885,12 +890,16 @@ class Authorization:
                 return ost_user
 
         # Check API Key Header
-        key: Optional[str] = request.headers.get("X-Api-Key")
+        key = request.headers.get("X-Api-Key")
         if key:
             try:
-                return self.validate_api_key(key)
+                api_key_user = self.validate_api_key(key)
             except self.server.error as e:
-                raise HTTPError(401, str(e))
+                raise HTTPError(401, str(e)) from e
+            else:
+                if api_key_user is not None:
+                    return api_key_user
+
 
         # If the force_logins option is enabled and at least one user is created
         # then trusted user authentication is disabled

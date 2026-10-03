@@ -423,24 +423,16 @@ class BaseRemoteConnection(APITransport):
         api_key: Optional[str] = None
     ) -> None:
         auth: AuthComp = self.server.lookup_component("authorization", None)
-        if auth is None:
-            return
-        try:
+        uinfo: UserInfo | None = None
+        if auth is not None:
             if token is not None:
-                self.user_info = auth.validate_jwt(token)
+                uinfo = auth.validate_jwt(token)
             elif api_key is not None:
-                self.user_info = auth.validate_api_key(api_key)
-            elif self._need_auth:
-                raise self.server.error("Unauthorized", 401)
-        except self.server.error:
-            if self._user_info is not None:
-                logging.info(
-                    f"Connection {self._uid}: Trusted Client attempt at user/api-key "
-                    "authentication failed.  Revoking trusted authentication."
-                )
-            self._user_info = None
-            self._need_auth = True
-            raise
+                uinfo = auth.validate_api_key(api_key)
+        if uinfo is not None:
+            self.user_info = uinfo
+        elif self._need_auth:
+            raise self.server.error("Unauthorized", 401)
 
     def check_authenticated(self, api_def: APIDefinition) -> None:
         if not self._need_auth:
