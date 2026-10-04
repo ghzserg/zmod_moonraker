@@ -637,7 +637,7 @@ class Machine:
                 logging.exception(f"Error reading {CGROUP_PATH}")
 
         # Fall back to process schedule check
-        if not self.inside_container:
+        if not self.inside_container and not skip:
             sched_file = pathlib.Path(SCHED_PATH)
             if sched_file.exists():
                 try:
