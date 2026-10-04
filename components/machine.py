@@ -619,7 +619,8 @@ class Machine:
     def _check_inside_container(self) -> Dict[str, Any]:
         cgroup_file = pathlib.Path(CGROUP_PATH)
         virt_type = virt_id = "none"
-        if cgroup_file.exists():
+        skip = True
+        if cgroup_file.exists() and not skip:
             try:
                 data = cgroup_file.read_text()
                 container_types = ["docker", "lxc"]
