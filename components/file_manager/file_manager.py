@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     _T = TypeVar("_T")
 
 VALID_GCODE_EXTS = ['.gcode', '.g', '.gco', '.ufp', '.nc', '.3mf']
+VARIABLES_CONFIG = "/usr/data/config/mod_data/variables.cfg"
 METADATA_SCRIPT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "metadata.py"))
 WATCH_FLAGS = iFlags.CREATE | iFlags.DELETE | iFlags.MODIFY \
@@ -65,6 +66,8 @@ WATCH_FLAGS = iFlags.CREATE | iFlags.DELETE | iFlags.MODIFY \
 
 class FileManager:
     def __init__(self, config: ConfigHelper) -> None:
+        if not self._get_convert_3mf() and '.3mf' in VALID_GCODE_EXTS:
+            VALID_GCODE_EXTS.remove('.3mf')
         self.server = config.get_server()
         self.event_loop = self.server.get_event_loop()
         self.reserved_paths: Dict[str, Tuple[pathlib.Path, bool]] = {}
@@ -178,6 +181,17 @@ class FileManager:
 
     def start_file_observer(self):
         self.fs_observer.initialize()
+
+    def _get_convert_3mf(self) -> bool:
+        try:
+            with open(VARIABLES_CONFIG, "r", encoding="utf-8") as f:
+                for line in f:
+                    s = line.strip()
+                    if s.startswith("convert_3mf"):
+                        return "= 0" not in s
+        except Exception:
+            pass
+        return True
 
     def _update_fixed_paths(self) -> None:
         kinfo = self.server.get_klippy_info()
@@ -871,7 +885,11 @@ class FileManager:
         start_print: bool = upload_args.get('print', "false") == "true"
         f_ext = os.path.splitext(dest_path)[-1].lower()
         unzip_ufp = f_ext == ".ufp" and root == "gcodes"
-        unzip_3mf = f_ext == ".3mf" and root == "gcodes"
+        unzip_3mf = (
+            f_ext == ".3mf" and
+            root == "gcodes" and
+            ".3mf" in VALID_GCODE_EXTS
+        )
         if unzip_ufp:
             filename = os.path.splitext(filename)[0] + ".gcode"
             dest_path = os.path.splitext(dest_path)[0] + ".gcode"
