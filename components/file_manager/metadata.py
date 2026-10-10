@@ -207,6 +207,10 @@ class BaseSlicer(metaclass=SlicerType):
 
     @classmethod
     def from_file(cls, file_path: str) -> BaseSlicer:
+        if file_path.lower().endswith('.3mf'):
+            return ThreeMFProject(
+                file_path, os.path.getsize(file_path), "PK\x03\x04", "3MF Project", "1.0"
+            )
         header = tail = ""
         with open(file_path, 'rb') as f:
             size = f.seek(0, os.SEEK_END)
@@ -1206,6 +1210,25 @@ class KiriMoto(BaseSlicer):
             r"; firstLayerBedTemp = (%F)", self.header_data
         )
 
+class ThreeMFProject(BaseSlicer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from parse_3mf import ThreeMFParser
+        self.parser = ThreeMFParser(self.path)
+
+    @classmethod
+    def identify(cls, data: str) -> Tuple[str, str] | None:
+        if data.startswith("PK\x03\x04"):
+            return "3MF Project", "1.0"
+        return None
+
+    def parse_thumbnails(self) -> Optional[List[Dict[str, Any]]]: return self.parser.parse_thumbnails()
+    def parse_estimated_time(self) -> Optional[float]: return self.parser.parse_estimated_time()
+    def parse_filament_weight_total(self) -> Optional[float]: return self.parser.parse_filament_weight_total()
+    def parse_printer_model(self) -> Optional[str]: return self.parser.parse_printer_model()
+    def parse_nozzle_diameter(self) -> Optional[float]: return self.parser.parse_nozzle_diameter()
+    def parse_filament_type(self) -> Optional[str]: return self.parser.parse_filament_type()
+    def parse_filament_colors(self) -> Optional[List[str]]: return self.parser.parse_filament_colors()
 
 PPC_REGEX = (
     r"^; Pre-Processed for Cancel-Object support "

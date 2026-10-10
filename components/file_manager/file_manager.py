@@ -66,8 +66,6 @@ WATCH_FLAGS = iFlags.CREATE | iFlags.DELETE | iFlags.MODIFY \
 
 class FileManager:
     def __init__(self, config: ConfigHelper) -> None:
-        if not self._get_convert_3mf() and '.3mf' in VALID_GCODE_EXTS:
-            VALID_GCODE_EXTS.remove('.3mf')
         self.server = config.get_server()
         self.event_loop = self.server.get_event_loop()
         self.reserved_paths: Dict[str, Tuple[pathlib.Path, bool]] = {}
@@ -885,10 +883,11 @@ class FileManager:
         start_print: bool = upload_args.get('print', "false") == "true"
         f_ext = os.path.splitext(dest_path)[-1].lower()
         unzip_ufp = f_ext == ".ufp" and root == "gcodes"
+        convert_3mf_enabled = self._get_convert_3mf()
         unzip_3mf = (
             f_ext == ".3mf" and
             root == "gcodes" and
-            ".3mf" in VALID_GCODE_EXTS
+            convert_3mf_enabled
         )
         if unzip_ufp:
             filename = os.path.splitext(filename)[0] + ".gcode"
@@ -899,6 +898,8 @@ class FileManager:
 
             filename = pure_fn + ".gcode"
             dest_path = pure_dp + ".gcode"
+        else:
+            pass
         if (
             os.path.isfile(dest_path) and
             os.access in os.supports_effective_ids and
