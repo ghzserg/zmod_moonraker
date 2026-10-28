@@ -430,7 +430,16 @@ class FileManager:
             raise self.server.error(
                 f"Metadata not available for <{requested_file}>", 404)
         metadata['filename'] = requested_file
-        return metadata
+        return self._metadata_with_permissions(requested_file, metadata)
+
+    def _metadata_with_permissions(
+        self, filename: str, metadata: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        gcpath = pathlib.Path(self.file_paths["gcodes"]).joinpath(filename)
+        ret = dict(metadata)
+        ret['permissions'] = self.get_path_info(
+            gcpath, "gcodes", raise_error=False)['permissions']
+        return ret
 
     async def _handle_metascan_request(
         self, web_request: WebRequest
@@ -461,7 +470,7 @@ class FileManager:
                 raise self.server.error(
                     f"Failed to parse metadata for file '{requested_file}'", 500)
             metadata['filename'] = requested_file
-            return metadata
+            return self._metadata_with_permissions(requested_file, metadata)
 
     async def _handle_list_roots(
         self, web_request: WebRequest
