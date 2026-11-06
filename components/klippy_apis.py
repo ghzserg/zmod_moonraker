@@ -102,7 +102,8 @@ class KlippyAPI(APITransport):
         filename: str = web_request.get_str('filename')
         user = web_request.get_current_user()
         plateindex: Optional[str] = web_request.get_str('plateindex', None)
-        return await self.start_print(filename, user=user, plateindex=plateindex)
+        tools: Optional[str] = web_request.get_str('tools', None)
+        return await self.start_print(filename, user=user, plateindex=plateindex, tools=tools)
 
     async def _gcode_restart(self, web_request: WebRequest) -> str:
         return await self.do_restart("RESTART")
@@ -140,7 +141,8 @@ class KlippyAPI(APITransport):
         filename: str,
         wait_klippy_started: bool = False,
         user: Optional[UserInfo] = None,
-        plateindex: Optional[str] = None
+        plateindex: Optional[str] = None,
+        tools: Optional[str] = None
     ) -> str:
         # WARNING: Do not call this method from within the following
         # event handlers when "wait_klippy_started" is set to True:
@@ -185,6 +187,9 @@ class KlippyAPI(APITransport):
                 script += f' PLATE={int(plateindex)}'
             except (ValueError, TypeError):
                 pass
+        if tools:
+            script += ' SILENT=1 AUTO_ASSIGN=0' + ''.join(
+                f' T{i}={int(s)}' for i, s in enumerate(tools.split(',')) if s.strip().isdigit())
         # END FF5M Fix Print Bug
         if wait_klippy_started:
             await self.klippy.wait_started()
