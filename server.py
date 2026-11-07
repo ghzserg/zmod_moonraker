@@ -532,7 +532,8 @@ class Server:
             'moonraker_version': self.app_args['software_version'],
             'missing_klippy_requirements': mreqs,
             'api_version': API_VERSION,
-            'api_version_string': ".".join([str(v) for v in API_VERSION])
+            'api_version_string': ".".join([str(v) for v in API_VERSION]),
+            'zmod': {'features': ['print_start_tools']}
         }
 
     async def _handle_config_request(self, web_request: WebRequest) -> Dict[str, Any]:
