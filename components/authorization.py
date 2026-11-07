@@ -181,6 +181,12 @@ class Authorization:
             else:
                 self.cors_domains.append(
                     domain.replace(".", "\\.").replace("*", ".*"))
+        # Z-Mod: allow mDNS hostname from [zeroconf]
+        if config.has_section("zeroconf"):
+            mdns: str = config.getsection("zeroconf").get(
+                "mdns_hostname", hi["hostname"]).lower()
+            self.cors_domains.append(
+                f"https?://{re.escape(mdns)}\\.local(:[0-9]+)?")
 
         # Get Trusted Clients
         self.trusted_ips: List[IPAddr] = []
