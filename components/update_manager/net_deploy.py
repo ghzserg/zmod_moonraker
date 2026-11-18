@@ -41,6 +41,7 @@ class NetDeploy(AppDeploy):
             self._configure_managed_services(config)
         elif self.type == AppType.WEB:
             self.prefix = f"Web Client {self.name}: "
+            self.post_update_gcode = config.get("post_update_gcode", None)
         elif self.type == AppType.EXECUTABLE:
             self.prefix = f"Executable {self.name}: "
             self._configure_sysdeps(config)
@@ -461,6 +462,14 @@ class NetDeploy(AppDeploy):
         self._save_state()
         await self.restart_service()
         subprocess.run(["/usr/data/zmod/zmod/.shell/root/S70httpd", "restart"])
+        if self.type == AppType.WEB and rollback_info is None:
+            if self.post_update_gcode:
+                try:
+                    await self.server.lookup_component("klippy_apis").run_gcode(
+                        self.post_update_gcode)
+                except Exception as e:
+                    logging.exception(f"{self.prefix}Post-update G-code failed")
+                    self.notify_status(f"Post-update G-code failed: {e}")
         msg = "Update Finished..." if rollback_info is None else "Rollback Complete"
         self.notify_status(msg, is_complete=True)
         return True
