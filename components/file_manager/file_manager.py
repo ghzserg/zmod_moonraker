@@ -70,6 +70,10 @@ class FileManager:
         self.reserved_paths: Dict[str, Tuple[pathlib.Path, bool]] = {}
         self.full_access_roots: Set[str] = set()
         self.file_paths: Dict[str, str] = {}
+        self.ignore_dirs = set(config.getlist("ignore_dirs", [
+            ".git", ".mod", ".zmod", ".shell", "printer_data", "log",
+            "plugins", "mod", "mod_data", "base"
+        ], separator=","))
         app_args = self.server.get_app_args()
         self.datapath = pathlib.Path(app_args["data_path"])
         srcdir = str(source_info.source_path())
@@ -1028,10 +1032,9 @@ class FileManager:
             scan_dirs: List[str] = []
             # Filter out directories that have already been visited. This
             # prevents infinite recursion "followlinks" is set to True
-            for ignore_dir in ['.git', '.mod', '.zmod', '.shell', 'printer_data', 'log', 'plugins', 'mod', 'mod_data', 'base']:
-                if ignore_dir in dir_names:
-                    dir_names.remove(ignore_dir)
             for dname in dir_names:
+                if dname in self.ignore_dirs:
+                    continue
                 full_path = os.path.join(dir_path, dname)
                 if not os.path.exists(full_path):
                     continue
@@ -1581,6 +1584,8 @@ class InotifyNode:
             item_path = os.path.join(dir_path, fname)
             if os.path.isdir(item_path):
                 fm = self.iobsvr.file_manager
+                if fname in fm.ignore_dirs:
+                    continue
                 # Наблюдаем за темами по путям, используемым веб-интерфейсами.
                 if (self.get_root() == "config"
                         and fname in (".theme", ".fluidd-theme")
@@ -2081,7 +2086,8 @@ class InotifyObserver(BaseFileSystemObserver):
         full_path = os.path.join(node_path, evt.name)
         if evt.mask & iFlags.CREATE:
             logging.debug(f"Inotify directory create: {root}, {node_path}, {evt.name}")
-            if self.file_manager.check_reserved_path(full_path, True, False):
+            if (evt.name in self.file_manager.ignore_dirs
+                    or self.file_manager.check_reserved_path(full_path, True, False)):
                 logging.debug(
                     f"Inotify - ignoring create watch at reserved path: {full_path}"
                 )
@@ -2089,6 +2095,8 @@ class InotifyObserver(BaseFileSystemObserver):
                 self.sync_lock.add_pending_path("create_dir", full_path)
                 node.create_child_node(evt.name)
         elif evt.mask & iFlags.DELETE:
+            if evt.name in self.file_manager.ignore_dirs:
+                return
             logging.debug(f"Inotify directory delete: {root}, {node_path}, {evt.name}")
             node.schedule_child_delete(evt.name, True)
         elif evt.mask & iFlags.MOVED_FROM:
@@ -2109,7 +2117,8 @@ class InotifyObserver(BaseFileSystemObserver):
                 # Moved from a currently watched directory
                 prev_parent, child_name, hdl = moved_evt
                 hdl.cancel()
-                if self.file_manager.check_reserved_path(full_path, True, False):
+                if (evt.name in self.file_manager.ignore_dirs
+                    or self.file_manager.check_reserved_path(full_path, True, False)):
                     # Previous node was renamed/moved to a reserved path.  To API
                     # consumers this will appear as deleted
                     logging.debug(
@@ -2122,7 +2131,8 @@ class InotifyObserver(BaseFileSystemObserver):
             else:
                 # Moved from an unwatched directory, for our purposes this is the same
                 # as creating a directory
-                if self.file_manager.check_reserved_path(full_path, True, False):
+                if (evt.name in self.file_manager.ignore_dirs
+                    or self.file_manager.check_reserved_path(full_path, True, False)):
                     logging.debug(
                         f"Inotify - ignoring moved folder to reserved path: {full_path}"
                     )
