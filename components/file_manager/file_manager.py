@@ -1581,6 +1581,14 @@ class InotifyNode:
             item_path = os.path.join(dir_path, fname)
             if os.path.isdir(item_path):
                 fm = self.iobsvr.file_manager
+                # Наблюдаем за темами по путям, используемым веб-интерфейсами.
+                if (self.get_root() == "config"
+                        and fname in (".theme", ".fluidd-theme")
+                        and dir_path == os.path.join(fm.get_directory("config"), "mod_data")):
+                    theme_link = os.path.join(fm.get_directory("config"), fname)
+                    if (os.path.islink(theme_link)
+                            and os.path.realpath(theme_link) == os.path.realpath(item_path)):
+                        continue
                 if fm.check_reserved_path(item_path, True, False):
                     continue
                 new_child = self.create_child_node(fname, False)
