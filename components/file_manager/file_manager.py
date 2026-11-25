@@ -1984,6 +1984,12 @@ class InotifyObserver(BaseFileSystemObserver):
             root = node.get_root()
             cur_node = self.watched_nodes[watch]
             existing_root = cur_node.get_root()
+            # Самостоятельные корни Z-Mod уже наблюдаются по правильному пути.
+            if (isinstance(cur_node, InotifyRootNode)
+                    and not isinstance(node, InotifyRootNode)
+                    and (root, existing_root) in (("config", "gcodes"),
+                                                  ("gcodes", "timelapse"))):
+                raise self.server.error("Watch already exists")
             msg = (
                 f"Inotify watch already exists for path '{dir_path}' in "
                 f"root '{existing_root}', cannot add watch to requested root "
