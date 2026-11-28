@@ -17,7 +17,7 @@ import time
 import math
 import shlex
 import contextlib
-from copy import deepcopy
+from copy import copy, deepcopy
 from inotify_simple import INotify
 from inotify_simple import flags as iFlags
 from ...utils import source_info
@@ -70,6 +70,7 @@ class FileManager:
         self.reserved_paths: Dict[str, Tuple[pathlib.Path, bool]] = {}
         self.full_access_roots: Set[str] = set()
         self.file_paths: Dict[str, str] = {}
+        self.file_list_lock = asyncio.Lock()
         self.ignore_dirs = set(config.getlist("ignore_dirs", [
             ".git", ".mod", ".zmod", ".shell", "printer_data", "log",
             "plugins", "mod", "mod_data", "base", "tmp", ".thumbs",
@@ -423,8 +424,34 @@ class FileManager:
                                        web_request: WebRequest
                                        ) -> List[Dict[str, Any]]:
         root = web_request.get_str('root', "gcodes")
-        flist = self.get_file_list(root, list_format=True)
+        flist = await self._run_file_scan("get_file_list", root, True)
         return cast(List[Dict[str, Any]], flist)
+
+    async def _run_file_scan(self, method: str, *args: Any) -> Any:
+        await self.file_list_lock.acquire()
+        try:
+            # A scan must not starve Klippy's socket reader.  Snapshot the
+            # mutable path/permission tables before leaving the event loop.
+            scanner = copy(self)
+            scanner.file_paths = dict(self.file_paths)
+            scanner.reserved_paths = dict(self.reserved_paths)
+            scanner.full_access_roots = set(self.full_access_roots)
+            scanner.ignore_dirs = set(self.ignore_dirs)
+            if method == "_scan_directory" and args[1]:
+                # Metadata inserts replace owned values; get() deep-copies them.
+                # Keep a stable key/value view without copying all payloads here.
+                scanner.gcode_metadata = copy(self.gcode_metadata)
+                scanner.gcode_metadata.metadata = dict(self.gcode_metadata.metadata)
+            future = asyncio.ensure_future(
+                self.event_loop.run_in_thread(getattr(scanner, method), *args)
+            )
+        except BaseException:
+            self.file_list_lock.release()
+            raise
+        # Cancelling a disconnected request cannot stop a running thread.
+        # Release only when that worker actually exits, including on error.
+        future.add_done_callback(lambda _: self.file_list_lock.release())
+        return await asyncio.shield(future)
 
     async def _handle_metadata_request(self,
                                        web_request: WebRequest
@@ -514,13 +541,13 @@ class FileManager:
                                         web_request: WebRequest
                                         ) -> Dict[str, Any]:
         directory = web_request.get_str('path', "gcodes")
-        root, dir_path = self._convert_request_path(directory)
         req_type = web_request.get_request_type()
         if req_type == RequestType.GET:
             is_extended = web_request.get_boolean('extended', False)
-            # Get list of files and subdirectories for this target
-            dir_info = self._list_directory(dir_path, root, is_extended)
-            return dir_info
+            return await self._run_file_scan(
+                "_scan_directory", directory, is_extended
+            )
+        root, dir_path = self._convert_request_path(directory)
         async with self.sync_lock:
             self.check_reserved_path(dir_path, True)
             action = "create_dir"
@@ -758,6 +785,10 @@ class FileManager:
                         except PermissionError:
                             continue
         shutil.move(str(temp_dest), str(destination))
+
+    def _scan_directory(self, directory: str, is_extended: bool) -> Dict[str, Any]:
+        root, path = self._convert_request_path(directory)
+        return self._list_directory(path, root, is_extended)
 
     def _list_directory(self,
                         path: str,
