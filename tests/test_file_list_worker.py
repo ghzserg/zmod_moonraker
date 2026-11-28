@@ -1,5 +1,6 @@
 """Exercise the real file-list endpoint and filesystem without a printer."""
 import asyncio
+import gc
 import importlib.util
 import pathlib
 import sys
@@ -20,7 +21,19 @@ spec.loader.exec_module(package)
 from moonraker.components.file_manager import file_manager as fm
 from moonraker.common import RequestType, WebRequest
 from moonraker.eventloop import EventLoop
+from moonraker.server import Server
 from moonraker.utils.exceptions import ServerError
+
+
+def assert_handled_worker_errors(case, errors):
+    # Python 3.14 explicitly reports a failed shielded future after its caller
+    # was cancelled. Older supported versions consume that exception silently.
+    # Accept that intentional diagnostic, but not leaked tasks or callback errors.
+    for context in errors:
+        case.assertEqual(context["message"], "PermissionError exception in shielded future")
+        case.assertIsInstance(context["exception"], PermissionError)
+        case.assertTrue(context["future"].done())
+        case.assertIs(context["future"].exception(), context["exception"])
 
 
 class FileListWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -221,6 +234,105 @@ class FileListWorkerTests(unittest.IsolatedAsyncioTestCase):
             await self.request("missing")
         self.assertEqual((await self.request())[0]["path"], "part.gcode")
 
+    async def test_cancelled_client_and_worker_error_are_drained(self):
+        loop = asyncio.get_running_loop()
+        errors = []
+        old_handler = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _loop, context: errors.append(context))
+        entered, release = threading.Event(), threading.Event()
+        timer = threading.Timer(2, release.set)
+        timer.start()
+        def failing_walk(*args, **kwargs):
+            entered.set()
+            release.wait(2)
+            raise PermissionError("fixture after disconnect")
+        try:
+            with mock.patch.object(fm.os, "walk", failing_walk):
+                request = asyncio.create_task(self.request())
+                await self.wait_thread(entered)
+                request.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await request
+                self.assertTrue(self.manager.file_list_lock.locked())
+                release.set()
+                deadline = loop.time() + 2
+                while self.manager.file_list_lock.locked():
+                    self.assertLess(loop.time(), deadline)
+                    await asyncio.sleep(.005)
+            del request
+            gc.collect()
+            await asyncio.sleep(0)
+            assert_handled_worker_errors(self, errors)
+            self.assertEqual((await self.request())[0]["path"], "part.gcode")
+        finally:
+            release.set()
+            timer.cancel()
+            timer.join()
+            loop.set_exception_handler(old_handler)
+
+    async def test_server_stop_while_directory_worker_is_running(self):
+        storage = fm.MetadataStorage.__new__(fm.MetadataStorage)
+        storage.metadata = {"part.gcode": {"estimated_time": 12}}
+        storage.mddb = {}
+        self.manager.gcode_metadata = storage
+        self.manager.scheduled_notifications = {}
+        self.manager.fs_observer = types.SimpleNamespace(close=mock.Mock())
+        original = fm.FileManager._list_directory
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        worker_metadata = []
+        timer = threading.Timer(3, release.set)
+        timer.start()
+        def held(scanner, *args):
+            entered.set()
+            release.wait(3)
+            try:
+                result = original(scanner, *args)
+                worker_metadata.append(result["files"][0]["estimated_time"])
+                return result
+            finally:
+                finished.set()
+        try:
+            with mock.patch.object(fm.FileManager, "_list_directory", held):
+                request = asyncio.create_task(self.directory(extended=True))
+                await self.wait_thread(entered)
+                queued = asyncio.create_task(self.request())
+                async def close_app():
+                    request.cancel()
+                    queued.cancel()
+                    await asyncio.gather(request, queued, return_exceptions=True)
+                server = Server.__new__(Server)
+                server.components = {
+                    "database": types.SimpleNamespace(close=storage.metadata.clear),
+                    "file_manager": self.manager,
+                }
+                server.moonraker_app = types.SimpleNamespace(close=close_app)
+                server.websocket_manager = types.SimpleNamespace(close=mock.AsyncMock())
+                server.klippy_connection = types.SimpleNamespace(close=mock.AsyncMock())
+                server.event_loop = self.manager.event_loop
+                server.app_running_evt = asyncio.Event()
+                with mock.patch.object(server.event_loop, "remove_signal_handler"):
+                    await asyncio.wait_for(server._stop_server("terminate"), 1)
+                self.assertTrue(server.app_running_evt.is_set())
+                self.assertEqual(server.exit_reason, "terminate")
+                self.assertFalse(server.server_running)
+                self.assertTrue(request.cancelled())
+                self.assertTrue(queued.cancelled())
+                self.assertTrue(self.manager.file_list_lock.locked())
+                self.assertFalse(finished.is_set())
+                self.assertEqual(storage.metadata, {})
+                self.manager.fs_observer.close.assert_called_once_with()
+                release.set()
+                await self.wait_thread(finished)
+                deadline = asyncio.get_running_loop().time() + 2
+                while self.manager.file_list_lock.locked():
+                    self.assertLess(asyncio.get_running_loop().time(), deadline)
+                    await asyncio.sleep(.005)
+                self.assertEqual(worker_metadata, [12])
+        finally:
+            release.set()
+            timer.cancel()
+            timer.join()
+
     async def test_snapshot_isolated_from_path_and_permission_updates(self):
         original = fm.os.walk
         entered = threading.Event()
@@ -273,6 +385,59 @@ class FileListWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([f["path"] for f in second], ["moved.gcode", "nested/B.GCODE"])
         (self.root / "moved.gcode").unlink()
         self.assertEqual([f["path"] for f in await self.request()], ["nested/B.GCODE"])
+
+
+class FileListWorkerLoopShutdownTests(unittest.TestCase):
+    def test_asyncio_run_drains_scan_after_client_cancel(self):
+        # server.main() uses asyncio.run() for each Moonraker server lifetime.
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        errors = []
+        timer = None
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = fm.FileManager.__new__(fm.FileManager)
+            manager.server = types.SimpleNamespace(error=ServerError)
+            manager.file_paths = {"gcodes": tmp}
+            manager.full_access_roots = {"gcodes"}
+            manager.reserved_paths = {}
+            manager.ignore_dirs = set()
+            def held_walk(*args, **kwargs):
+                entered.set()
+                release.wait(2)
+                try:
+                    raise PermissionError("fixture during loop shutdown")
+                finally:
+                    finished.set()
+            async def main():
+                nonlocal timer
+                loop = asyncio.get_running_loop()
+                loop.set_exception_handler(lambda _loop, context: errors.append(context))
+                manager.event_loop = EventLoop()
+                manager.file_list_lock = asyncio.Lock()
+                task = asyncio.create_task(manager._handle_filelist_request(
+                    WebRequest("/server/files/list", {"root": "gcodes"}, RequestType.GET)
+                ))
+                deadline = loop.time() + 2
+                while not entered.is_set():
+                    self.assertLess(loop.time(), deadline)
+                    await asyncio.sleep(.005)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                self.assertFalse(finished.is_set())
+                timer = threading.Timer(.1, release.set)
+                timer.start()
+                # Return while the executor still owns a live filesystem scan.
+            try:
+                with mock.patch.object(fm.os, "walk", held_walk):
+                    asyncio.run(main())
+                self.assertTrue(finished.is_set())
+                gc.collect()
+                assert_handled_worker_errors(self, errors)
+            finally:
+                release.set()
+                if timer is not None:
+                    timer.cancel()
+                    timer.join()
 
 
 if __name__ == "__main__":
