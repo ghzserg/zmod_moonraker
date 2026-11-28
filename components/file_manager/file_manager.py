@@ -72,7 +72,9 @@ class FileManager:
         self.file_paths: Dict[str, str] = {}
         self.ignore_dirs = set(config.getlist("ignore_dirs", [
             ".git", ".mod", ".zmod", ".shell", "printer_data", "log",
-            "plugins", "mod", "mod_data", "base"
+            "plugins", "mod", "mod_data", "base", "tmp", ".thumbs",
+            "uploadThumbnail", "thumbnails", "camera", "logFiles",
+            "lost+found", "__pycache__"
         ], separator=","))
         app_args = self.server.get_app_args()
         self.datapath = pathlib.Path(app_args["data_path"])
